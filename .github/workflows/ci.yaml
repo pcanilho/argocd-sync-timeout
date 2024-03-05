@@ -1,0 +1,10 @@
+name: develop workflow
+on:
+  pull_request:
+    branches: [ '**' ]
+permissions:
+  id-token: write
+  contents: read
+jobs:
+  ci:
+    uses: ./.github/workflows/validate.yaml

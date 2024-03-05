@@ -1,0 +1,15 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: argocd-sync-timeout
+rules:
+  - apiGroups: [ "", "argoproj.io" ]
+    resources: [ "*" ]
+    verbs: [ "get", "list" ]
+  - apiGroups: [ "" ]
+    resources: [ "pods/portforward", "events" ]
+    verbs: [ "create" ]
+  - apiGroups: [ "argoproj.io" ]
+    resources: [ "applications" ]
+    verbs: [ "update", "patch" ]

@@ -1,0 +1,15 @@
+name: ⎈️ Validate Helm charts
+on:
+  workflow_call:
+    inputs: {}
+jobs:
+  validate-job:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate the [entrypoint] Helm chart
+        working-directory: charts/entrypoint
+        run: |
+          helm dependency update
+          helm template .

@@ -1,0 +1,9 @@
+---
+timeout: 10s
+deferSync: false
+applications:
+  my-argo-app:
+    timeout: 1s
+    overrides:
+      my-cluster: 30m
+      my-cluster-2: 6m

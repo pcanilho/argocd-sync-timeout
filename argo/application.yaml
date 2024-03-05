@@ -1,0 +1,28 @@
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: argocd-sync-timeout
+spec:
+  destination:
+    name: in-cluster
+    namespace: argocd
+  project: default
+  sources:
+  - repoURL: ghcr.io/pcanilho/argocd-sync-timeout
+    chart: charts/entrypoint
+    targetRevision: 0.1.0
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+      allowEmpty: true
+    syncOptions:
+      - ApplyOutOfSyncOnly=true
+      - ServerSideApply=true
+    retry:
+      limit: 3
+      backoff:
+        duration: 1m
+        factor: 2
+        maxDuration: 2m

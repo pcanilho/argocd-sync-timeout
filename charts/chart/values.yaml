@@ -1,0 +1,34 @@
+---
+replicaCount: 1
+
+image:
+  repository: ghcr.io/pcanilho/argocd-sync-timeout
+  pullPolicy: Always
+  tag: latest
+
+resources:
+   limits:
+     memory: 256Mi
+   requests:
+     cpu: 100m
+     memory: 256Mi
+
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: &port 8181
+readinessProbe:
+  httpGet:
+    path: /readyz
+    port: *port
+
+ast:
+  standalone: true
+  configPath: /etc/ast
+  file: ast.yaml
+  data:
+    timeout: 10s
+    deferSync: false
+    applications: []
+  # 0: immediate
+  period: 5s

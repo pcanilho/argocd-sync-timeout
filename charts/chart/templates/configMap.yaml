@@ -1,0 +1,10 @@
+{{- if .Values.ast.standalone }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}
+data:
+  ast.yaml: |
+    {{- .Values.ast.data | toYaml | nindent 4}}
+{{ end -}}
