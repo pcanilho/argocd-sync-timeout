@@ -5,13 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/pkg/errors"
-	"log"
 	"log/slog"
 	"time"
 )
 
 const (
-	_cli = "argocd"
+	_cli = "/bin/argocd"
 )
 
 type app struct {
@@ -42,44 +41,44 @@ func (a *app) Cell() string {
 
 type Apps = []app
 
-func init() {
-	if err := login(); err != nil {
-		log.Fatalln(err)
-	}
-}
-
-func login() error {
+func Login() error {
 	_, _, err := runner.RunCommand(_cli, "login", "--core")
 	return errors.Wrap(err, "[argo] failed to login")
 }
 
-func EnforceSyncTimeout(logger *slog.Logger, name string, timeout time.Duration, deferSync bool) error {
-	if deferSync {
-		defer func() {
-			logger.Debug("Launching application sync...", "name", name)
-			syncAppAsync(name)
-		}()
-	}
+func EnforceSyncTimeout(logger *slog.Logger, name string, timeout time.Duration, deferSync bool) (err error) {
 	// Get app operation status
-	logger.Debug("Waiting for application operation to complete...", "name", name, "timeout", timeout)
+	logger.Debug("Waiting for application operation to complete...", "application", name, "timeout", timeout.String())
 	out, code, err := getAppOperationStatus(name, timeout)
-	logger.Debug("Application operation status...", "name", name, "code", code, "output", string(out), "error", err)
+	if code == -1 {
+		logger.Error(errors.Wrapf(err, "[argo] failed to get application operation status. code: %d. output: %s", code, string(out)).Error())
+	}
+	logger.Debug("Application operation status...", "application", name, "code", code, "error", err)
 	if code == 0 {
-		logger.Debug("Application operation completed successfully. Skipping...", "name", name, "code", code)
+		logger.Debug("Application operation completed successfully. Skipping...", "application", name, "code", code)
 		return nil
 	}
 	// If the App sync is in error state, terminate the operation
-	logger.Debug("Terminating application operation...", "name", name)
-	out, code, err = terminateAppOperation(name)
-	logger.Debug("Application operation terminated...", "name", name, "code", code, "output", string(out), "error", err)
-	if err != nil {
+	logger.Debug("Terminating application operation...", "application", name)
+	_, code, err = terminateAppOperation(name)
+	if code != 0 || err != nil {
 		return errors.Wrap(err, "[argo] failed to terminate app operation")
 	}
+	if deferSync {
+		logger.Debug("Launching application sync...", "application", name)
+		err = syncAppAsync(name)
+		if err != nil {
+			logger.Error(errors.Wrapf(err, "[argo] failed to launch application sync").Error())
+		} else {
+			logger.Debug("Application sync launched...", "application", name)
+		}
+	}
+
 	return nil
 }
 
 func ListApps() (Apps, error) {
-	out, code, err := runner.RunCommand(_cli, "app", "list", "-o", "json")
+	out, code, err := runner.RunCommand(_cli, "app", "list", "-o", "json", "--core")
 	if err != nil {
 		return nil, errors.Wrap(err, "[argo] failed to list Apps")
 	}
@@ -93,12 +92,13 @@ func ListApps() (Apps, error) {
 	return as, nil
 }
 
-func syncAppAsync(name string) {
-	_, _, _ = runner.RunCommand(_cli, "app", "sync", name, "--prune", "--apply-out-of-sync-only", "--async")
+func syncAppAsync(name string) error {
+	_, _, err := runner.RunCommand(_cli, "app", "sync", name, "--prune", "--apply-out-of-sync-only", "--async", "--core")
+	return err
 }
 
 func getAppOperationStatus(name string, timeout time.Duration) ([]byte, int, error) {
-	out, code, err := runner.RunCommand(_cli, "app", "wait", name, "--operation", "--timeout", fmt.Sprint(timeout.Seconds()))
+	out, code, err := runner.RunCommand(_cli, "app", "wait", name, "--operation", "--timeout", fmt.Sprint(timeout.Seconds()), "--core")
 	if err != nil {
 		return nil, code, errors.Wrap(err, "[argo] failed to get app operation status")
 	}
@@ -106,7 +106,7 @@ func getAppOperationStatus(name string, timeout time.Duration) ([]byte, int, err
 }
 
 func terminateAppOperation(name string) ([]byte, int, error) {
-	_, code, err := runner.RunCommand(_cli, "app", "terminate-op", name)
+	_, code, err := runner.RunCommand(_cli, "app", "terminate-op", name, "--core")
 	if err != nil {
 		return nil, code, errors.Wrap(err, "[argo] failed to terminate app operation")
 	}

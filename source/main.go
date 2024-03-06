@@ -7,13 +7,13 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"sync"
 	"time"
 )
 
 var (
 	_appPeriod time.Duration
-	_wg        sync.WaitGroup
 )
 
 func main() {
@@ -21,62 +21,71 @@ func main() {
 
 	p, err := time.ParseDuration(os.Getenv("AST_PERIOD"))
 	if err != nil {
-		logger.Error("Error parsing period...", "error", err)
+		logger.Error("Error parsing period from variable [AST_PERIOD]...", "error", err)
 		os.Exit(1)
 	}
 	_appPeriod = p
 
 	fw, cfg, err := watcher.NewFileWatcher(os.Getenv("AST_CONFIG"))
 	if err != nil {
-		logger.Error("Error creating file watcher...", "error", err)
+		logger.Error("Error creating file watcher from variable [AST_CONFIG]...", "error", err)
 		os.Exit(1)
 	}
 
-	logger.Info("Loaded configuration...", "config", cfg)
+	logger.Info("Loaded configuration...")
 
-	errorChan := make(chan error)
 	changed := make(chan struct{}, 1)
-	go fw.Watch(changed)
-	go probes.Run(errorChan)
 
-	logger.Info("Starting watcher...")
+	logger.Debug("Starting watcher...")
+	go fw.Watch(changed)
+	logger.Debug("Starting probes...")
+	go probes.Run(logger)
+	logger.Debug("Logging into ArgoCD...")
+	if err = argo.Login(); err != nil {
+		logger.Error("Error logging into ArgoCD...", "error", err)
+		os.Exit(1)
+	}
+
 	for {
 		select {
-		case e := <-errorChan:
-			logger.Error("Error processing configuration...", "error", e)
-			os.Exit(1)
 		case <-changed:
 			logger.Info("Configuration changed...", "config", fmt.Sprintf("%+v", cfg))
 		default:
 			// Process cfg
+			logger.Info(strings.Repeat("-", 80))
 			logger.Info("Processing configuration...")
 			apps, err := argo.ListApps()
 			if err != nil {
-				logger.Error("Error listing apps...", "error", err)
-				errorChan <- err
+				logger.Error("Error listing application...", "error", err)
+				os.Exit(1)
 			}
-			_wg.Add(len(apps))
-			if apps == nil {
+			if apps == nil || len(apps) == 0 {
 				logger.Debug("No applications found...")
 				continue
 			}
+			_wg := sync.WaitGroup{}
 			for _, app := range apps {
 				timeout := cfg.GetTimeout(app.Metadata.Name, app.Cell())
 				deferSync := cfg.GetDeferSync(app.Metadata.Name)
 
 				go func(appName string, appTimeout time.Duration) {
-					logger.Debug("Processing application...", "app", appName, "timeout", appTimeout)
+					_wg.Add(1)
+					defer _wg.Done()
+					logger.Debug("Processing application...", "application", appName, "timeout", appTimeout.String())
 					opErr := argo.EnforceSyncTimeout(logger, appName, appTimeout, deferSync)
 					if opErr != nil {
-						logger.Error("Error processing operation...", "app", appName, "error", opErr)
-						errorChan <- opErr
+						logger.Error("Error processing operation...", "application", appName, "error", opErr)
+					} else {
+						logger.Debug("Finished processing application...", "application", appName)
 					}
-					logger.Debug("Finished processing application...", "app", appName)
-					_wg.Done()
 				}(app.Metadata.Name, timeout)
 			}
+			logger.Debug(strings.Repeat("-", 40))
+			logger.Debug("Waiting for all applications to be processed...")
 			_wg.Wait()
 			if _appPeriod > 0 {
+				logger.Info("Sleeping...", "period", _appPeriod.String())
+				logger.Info(strings.Repeat("-", 80))
 				<-time.After(_appPeriod)
 			}
 		}

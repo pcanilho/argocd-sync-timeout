@@ -40,4 +40,4 @@ jobs:
           context: source/
           push: true
           tags: 'ghcr.io/pcanilho/argocd-sync-timeout:latest,ghcr.io/pcanilho/argocd-sync-timeout:${{ github.ref_name }}'
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ secrets.REGISTRY_PAT }}

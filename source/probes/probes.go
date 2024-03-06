@@ -1,6 +1,10 @@
 package probes
 
-import "net/http"
+import (
+	"log/slog"
+	"net/http"
+	"os"
+)
 
 var server http.Server
 
@@ -15,8 +19,11 @@ func init() {
 	}
 }
 
-func Run(eC chan error) {
-	eC <- server.ListenAndServe()
+func Run(logger *slog.Logger) {
+	if err := server.ListenAndServe(); err != nil {
+		logger.Error("The probes HTTP server has crashed...", "error", err)
+		os.Exit(3)
+	}
 }
 
 func liveness(w http.ResponseWriter, _ *http.Request) {

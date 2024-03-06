@@ -8,7 +8,8 @@ WORKDIR /tmp
 RUN curl -Lk https://github.com/argoproj/argo-cd/releases/download/v2.9.7/argocd-linux-amd64 -o argocd \
     && chmod +x argocd
 
-FROM gcr.io/distroless/base-debian12:nonroot
+#FROM gcr.io/distroless/base-debian12:nonroot
+FROM gcr.io/distroless/base-debian12:debug
 LABEL org.opencontainers.image.source=https://github.com/pcanilho/argocd-sync-timeout
 WORKDIR /bin
 COPY --from=builder /build/ast .
