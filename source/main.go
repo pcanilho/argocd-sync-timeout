@@ -72,7 +72,7 @@ func main() {
 					_wg.Add(1)
 					defer _wg.Done()
 					logger.Debug("Processing application...", "application", appName, "timeout", appTimeout.String())
-					opErr := argo.EnforceSyncTimeout(logger, appName, appTimeout, deferSync)
+					opErr := argo.EnforceSyncTimeout(logger, appName, appTimeout, deferSync, 10)
 					if opErr != nil {
 						logger.Error("Error processing operation...", "application", appName, "error", opErr)
 					} else {

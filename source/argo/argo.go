@@ -1,6 +1,7 @@
 package argo
 
 import (
+	"argocd-sync-timeout/retrier"
 	"argocd-sync-timeout/runner"
 	"encoding/json"
 	"fmt"
@@ -10,7 +11,7 @@ import (
 )
 
 const (
-	_cli = "/bin/argocd"
+	_cli = "argocd"
 )
 
 type app struct {
@@ -46,35 +47,38 @@ func Login() error {
 	return errors.Wrap(err, "[argo] failed to login")
 }
 
-func EnforceSyncTimeout(logger *slog.Logger, name string, timeout time.Duration, deferSync bool) (err error) {
-	// Get app operation status
+func EnforceSyncTimeout(logger *slog.Logger, name string, timeout time.Duration, deferSync bool, retries int) (err error) {
+	// Get app operation phase
 	logger.Debug("Waiting for application operation to complete...", "application", name, "timeout", timeout.String())
-	out, code, err := getAppOperationStatus(name, timeout)
-	if code == -1 {
-		logger.Error(errors.Wrapf(err, "[argo] failed to get application operation status. code: %d. output: %s", code, string(out)).Error())
+	phase, code, err := retrier.RunWithRetryGetOperationStatus(logger, retries, getAppOperationStatus, name, timeout)
+	if err != nil {
+		logger.Error(errors.Wrapf(err, "[argo] failed to get application operation status. code: %d. phase: %s. error: %v", code, phase, err).Error())
+		return errors.Wrapf(err, "[argo] failed to get application operation status. code: %d. phase: %s", code, phase)
 	}
-	logger.Debug("Application operation status...", "application", name, "code", code, "error", err)
-	if code == 0 {
+	logger.Debug("Processing application operation status...", "application", name, "phase", phase, "code", code, "error", err)
+	if (phase == PhaseSucceeded || phase == PhaseRunning) && code == 0 {
 		logger.Debug("Application operation completed successfully. Skipping...", "application", name, "code", code)
 		return nil
 	}
 	// If the App sync is in error state, terminate the operation
 	logger.Debug("Terminating application operation...", "application", name)
-	_, code, err = terminateAppOperation(name)
-	if code != 0 || err != nil {
-		return errors.Wrap(err, "[argo] failed to terminate app operation")
+	_, code, err = retrier.RunWithRetryOperation(logger, retries, terminateAppOperation, name)
+	if code != 0 && code != 20 {
+		logger.Error(errors.Wrapf(err, "[argo] failed to terminate application operation. code: %d", code).Error(), "application", name)
+		return errors.Wrapf(err, "[argo] failed to terminate application operation. code: %d", code)
 	}
+
 	if deferSync {
 		logger.Debug("Launching application sync...", "application", name)
-		err = syncAppAsync(name)
+		err = retrier.RunWithRetryError(logger, retries, syncAppAsync, name)
 		if err != nil {
-			logger.Error(errors.Wrapf(err, "[argo] failed to launch application sync").Error())
+			logger.Error(errors.Wrapf(err, "[argo] failed to launch application sync").Error(), "application", name)
 		} else {
 			logger.Debug("Application sync launched...", "application", name)
 		}
 	}
 
-	return nil
+	return err
 }
 
 func ListApps() (Apps, error) {
@@ -87,28 +91,42 @@ func ListApps() (Apps, error) {
 	}
 	var as Apps
 	if err = json.Unmarshal(out, &as); err != nil {
-		return nil, errors.Wrap(err, "[argo] failed to unmarshal Apps")
+		return nil, errors.Wrap(err, "[argo] failed to unmarshal the ArgoCD application list")
 	}
 	return as, nil
 }
 
 func syncAppAsync(name string) error {
-	_, _, err := runner.RunCommand(_cli, "app", "sync", name, "--prune", "--apply-out-of-sync-only", "--async", "--core")
-	return err
+	out, code, err := runner.RunCommand(_cli, "app", "sync", name, "--prune", "--apply-out-of-sync-only", "--async", "--assumeYes", "--server-side", "--core")
+	return errors.Wrapf(err, "[argo] failed to sync application. application: %v. code: %v. error: %v", name, code, string(out))
 }
 
-func getAppOperationStatus(name string, timeout time.Duration) ([]byte, int, error) {
+func getAppOperationStatus(name string, timeout time.Duration) (AppOperationPhase, int, error) {
 	out, code, err := runner.RunCommand(_cli, "app", "wait", name, "--operation", "--timeout", fmt.Sprint(timeout.Seconds()), "--core")
-	if err != nil {
-		return nil, code, errors.Wrap(err, "[argo] failed to get app operation status")
+	// Out of sync
+	if code == 20 {
+		return PhaseUnknown, code, nil
 	}
-	return out, code, nil
+	if err != nil {
+		return PhaseFailed, code, errors.Wrapf(err, "[argo] failed to get application operation status. application: %v", name)
+	}
+	status, err := getAppOperationSyncStatusFromOutput(out)
+	if status != SyncedStatus {
+		return PhaseFailed, 0, nil
+	}
+
+	phase, err := getAppOperationPhaseFromOutput(out)
+	return phase, code, err
 }
 
 func terminateAppOperation(name string) ([]byte, int, error) {
-	_, code, err := runner.RunCommand(_cli, "app", "terminate-op", name, "--core")
-	if err != nil {
-		return nil, code, errors.Wrap(err, "[argo] failed to terminate app operation")
+	out, code, err := runner.RunCommand(_cli, "app", "terminate-op", name, "--core")
+	// No ongoing operation
+	if code == 20 {
+		return out, code, nil
 	}
-	return nil, code, nil
+	if err != nil {
+		return out, code, errors.Wrapf(err, "[argo] failed to terminate application operation. application: %v. output: %v", name, string(out))
+	}
+	return out, code, nil
 }
